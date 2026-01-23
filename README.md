@@ -18,7 +18,12 @@ Make sure you have a C compiler installed.  The easiest way to do this is by ins
 
 Then, install using the standard
 
-    python setup.py install
+```
+conda create -n zebra_noise python=3.12
+conda activate zebra_noise
+conda install cython -y
+pip install -e .
+```
 
 This will compile the sources and install.
 

@@ -1,10 +1,56 @@
-import imageio
-from tqdm import tqdm
 import warnings
-from .util import generate_frames, filter_frames_index_function, apply_filters, discretize
 from math import ceil
+from pathlib import Path
 
-def zebra_noise(output_file, xsize, ysize, tdur, levels=10, xyscale=.2, tscale=50, fps=30, xscale=1.0, yscale=1.0, seed=0, filters=[("comb", 0.08)]):
+import cv2
+import numpy as np
+from einops import repeat
+from tqdm import tqdm
+
+from .util import apply_filters
+from .util import discretize
+from .util import filter_frames_index_function
+from .util import generate_frames
+
+
+def add_black_and_grey_screen(
+    writer: cv2.VideoWriter,
+    xsize: int,
+    ysize: int,
+    fps: int,
+):
+    # add 2s of black screen
+    black_frame = np.full(
+        shape=(ysize, xsize, 3),
+        fill_value=0,
+        dtype=np.uint8,
+    )
+    for _ in tqdm(range(2 * fps), desc="black screen"):
+        writer.write(black_frame)
+    # add 2s of grey screen
+    grey_frame = np.full(
+        shape=(ysize, xsize, 3),
+        fill_value=255 / 2,
+        dtype=np.uint8,
+    )
+    for _ in tqdm(range(2 * fps), desc="grey screen"):
+        writer.write(grey_frame)
+
+
+def zebra_noise(
+    output_file: Path,
+    xsize: int,
+    ysize: int,
+    tdur: int,
+    levels: int = 10,
+    xyscale: float = 0.2,
+    tscale: int = 50,
+    fps: int = 30,
+    xscale: float = 1.0,
+    yscale: float = 1.0,
+    seed: int = 0,
+    filters: list = [("comb", 0.08)],
+):
     """Generate a .mp4 of zebra noise.
 
     This method is a simplified interface for the PerlinStimulus class, designed to only generate zebra noise
@@ -30,23 +76,46 @@ def zebra_noise(output_file, xsize, ysize, tdur, levels=10, xyscale=.2, tscale=5
         Frames per second
     seed : int
         Random seed
-    
+
     Returns
     -------
     None, but saves the video file to the desired filename
-    """ 
-    tsize = int(tdur*fps)
-    tscale = tscale * (fps/30)
+    """
+    tsize = int(tdur * fps)
+    tscale = tscale * (fps / 30)
     textra = (tscale - (tsize % tscale)) % tscale
     if textra > 0:
-        warnings.warn(f"Adding {textra} extra timepoints to make tscale a multiple of tdur")
+        warnings.warn(
+            f"Adding {textra} extra timepoints to make tscale a multiple of tdur"
+        )
     tsize += round(textra) if (textra % 1 < 1e-5) else ceil(textra)
     get_index = filter_frames_index_function(filters, tsize)
-    writer = imageio.get_writer(output_file, fps=fps)
-    for _i in tqdm(range(0, tsize)):
+
+    writer = cv2.VideoWriter(
+        filename=str(output_file),
+        fourcc=cv2.VideoWriter_fourcc(*"MJPG"),
+        fps=fps,
+        frameSize=(xsize, ysize),
+    )
+
+    add_black_and_grey_screen(writer=writer, fps=fps, xsize=xsize, ysize=ysize)
+
+    for _i in tqdm(range(0, tsize), desc="Zebra noise"):
         i = get_index(_i)
-        frame = generate_frames(xsize, ysize, tsize, [i], levels=levels, xyscale=xyscale, tscale=tscale, xscale=xscale, yscale=yscale, seed=seed)
-        filtered = apply_filters(frame[None], filters)[0] # TODO I don't think this will work with the photodiode filter
-        disc = discretize(filtered[:,:,0])
-        writer.append_data(disc)
-    writer.close()
+        frame = generate_frames(
+            xsize,
+            ysize,
+            tsize,
+            [i],
+            levels=levels,
+            xyscale=xyscale,
+            tscale=tscale,
+            xscale=xscale,
+            yscale=yscale,
+            seed=seed,
+        )
+        # TODO I don't think this will work with the photodiode filter
+        filtered = apply_filters(frame[None], filters)[0]
+        disc = discretize(filtered[:, :, 0])
+        writer.write(repeat(disc, "h w -> h w c", c=3))
+    writer.release()

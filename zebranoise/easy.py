@@ -4,6 +4,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pandas as pd
 from einops import repeat
 from tqdm import tqdm
 
@@ -18,27 +19,34 @@ def add_black_and_grey_screen(
     xsize: int,
     ysize: int,
     fps: int,
-):
-    # add 2s of black screen
+) -> int:
     black_frame = np.full(
         shape=(ysize, xsize, 3),
         fill_value=0,
         dtype=np.uint8,
     )
-    for _ in tqdm(range(2 * fps), desc="black screen"):
-        writer.write(black_frame)
-    # add 2s of grey screen
-    grey_frame = np.full(
+    white_frame = np.full(
         shape=(ysize, xsize, 3),
-        fill_value=255 / 2,
+        fill_value=255,
         dtype=np.uint8,
     )
-    for _ in tqdm(range(2 * fps), desc="grey screen"):
-        writer.write(grey_frame)
+    num_frames = 0
+    # 2s of black screen
+    for _ in tqdm(range(2 * fps), desc="black screen"):
+        writer.write(black_frame)
+        num_frames += 1
+    # 0.5s of white screen
+    for _ in tqdm(range(int(0.5 * fps)), desc="white screen"):
+        writer.write(white_frame)
+        num_frames += 1
+    for _ in tqdm(range(2 * fps), desc="black screen"):
+        writer.write(black_frame)
+        num_frames += 1
+    return num_frames
 
 
 def zebra_noise(
-    output_file: Path,
+    filename: Path,
     xsize: int,
     ysize: int,
     tdur: int,
@@ -91,15 +99,17 @@ def zebra_noise(
     tsize += round(textra) if (textra % 1 < 1e-5) else ceil(textra)
     get_index = filter_frames_index_function(filters, tsize)
 
+    num_frames = 0
     writer = cv2.VideoWriter(
-        filename=str(output_file),
+        filename=str(filename.with_suffix(".avi")),
         fourcc=cv2.VideoWriter_fourcc(*"MJPG"),
         fps=fps,
         frameSize=(xsize, ysize),
     )
 
-    add_black_and_grey_screen(writer=writer, fps=fps, xsize=xsize, ysize=ysize)
-
+    num_frames += add_black_and_grey_screen(
+        writer=writer, fps=fps, xsize=xsize, ysize=ysize
+    )
     for _i in tqdm(range(0, tsize), desc="Zebra noise"):
         i = get_index(_i)
         frame = generate_frames(
@@ -118,4 +128,17 @@ def zebra_noise(
         filtered = apply_filters(frame[None], filters)[0]
         disc = discretize(filtered[:, :, 0])
         writer.write(repeat(disc, "h w -> h w c", c=3))
+        num_frames += 1
+    num_frames += add_black_and_grey_screen(
+        writer=writer, fps=fps, xsize=xsize, ysize=ysize
+    )
     writer.release()
+
+    info = pd.DataFrame(
+        {
+            "filename": [filename.stem],
+            "num_frames": [num_frames],
+            "duration (s)": [num_frames / fps],
+        }
+    )
+    info.to_csv(filename.parent / "info.csv", index=False)
